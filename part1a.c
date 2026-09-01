@@ -142,6 +142,9 @@ int main(int argc, char* argv[]) {
    if (my_rank == 0) vel = malloc(n*sizeof(vect_t));
    MPI_Type_contiguous(DIM, MPI_DOUBLE, &vect_mpi_t);
    MPI_Type_commit(&vect_mpi_t);
+   /* Allocate temporary buffers for ring communication */
+   send_buf = malloc(loc_n * sizeof(vect_t));
+   recv_buf = malloc(loc_n * sizeof(vect_t));
 
    if (g_i == 'i')
       Get_init_cond(masses, pos, loc_vel, n, loc_n);
@@ -159,6 +162,10 @@ int main(int argc, char* argv[]) {
       for (loc_part = 0; loc_part < loc_n; loc_part++)
          Update_part(loc_part, masses, loc_forces, loc_pos, loc_vel,
                n, loc_n, delta_t);
+         /* Initialize initial send buffer with locally updated positions */
+         memcpy(send_buf, loc_pos, loc_n * sizeof(vect_t));
+         send_owner = my_rank;
+
       MPI_Allgather(MPI_IN_PLACE, loc_n, vect_mpi_t,
                     pos, loc_n, vect_mpi_t, comm);
 #     ifndef NO_OUTPUT
@@ -177,6 +184,8 @@ int main(int argc, char* argv[]) {
    free(loc_forces);
    free(loc_vel);
    if (my_rank == 0) free(vel);
+   free(send_buf);
+   free(recv_buf);
 
    MPI_Finalize();
 
