@@ -131,6 +131,9 @@ int main(int argc, char* argv[]) {
 
    Get_args(argc, argv, &n, &n_steps, &delta_t, &output_freq, &g_i);
    loc_n = n/comm_sz;  /* n should be evenly divisible by comm_sz */
+   /* Calculate ring neighbors */
+   next = (my_rank + 1) % comm_sz;
+   previous = (my_rank - 1 + comm_sz) % comm_sz;
    masses = malloc(n*sizeof(double));
    pos = malloc(n*sizeof(vect_t));
    loc_forces = malloc(loc_n*sizeof(vect_t));
