@@ -179,6 +179,10 @@ int main(int argc, char* argv[]) {
 
          /* Place received block into correct location in global position array */
          memcpy(pos + recv_owner * loc_n, recv_buf, loc_n * sizeof(vect_t));
+
+         /* Prepare next transmission block */
+         memcpy(send_buf, recv_buf, loc_n * sizeof(vect_t));
+         send_owner = recv_owner;
       }
 #     ifndef NO_OUTPUT
       if (step % output_freq == 0)
