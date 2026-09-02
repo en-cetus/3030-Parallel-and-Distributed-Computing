@@ -166,8 +166,20 @@ int main(int argc, char* argv[]) {
          memcpy(send_buf, loc_pos, loc_n * sizeof(vect_t));
          send_owner = my_rank;
 
-      MPI_Allgather(MPI_IN_PLACE, loc_n, vect_mpi_t,
-                    pos, loc_n, vect_mpi_t, comm);
+      /*MPI_Allgather(MPI_IN_PLACE, loc_n, vect_mpi_t,
+                    pos, loc_n, vect_mpi_t, comm);*/
+
+      /* Pass position blocks around the ring for comm_sz - 1 stages */
+      for (stage = 1; stage < comm_sz; stage++) {
+         MPI_Sendrecv(send_buf, loc_n, vect_mpi_t, next, 0,
+                      recv_buf, loc_n, vect_mpi_t, previous, 0,
+                      comm, MPI_STATUS_IGNORE);
+                      /* Calculate original owner of received block */
+         recv_owner = (send_owner - 1 + comm_sz) % comm_sz;
+
+         /* Place received block into correct location in global position array */
+         memcpy(pos + recv_owner * loc_n, recv_buf, loc_n * sizeof(vect_t));
+      }
 #     ifndef NO_OUTPUT
       if (step % output_freq == 0)
          Output_state(t, masses, pos, loc_vel, n, loc_n);
