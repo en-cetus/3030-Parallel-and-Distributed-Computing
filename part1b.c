@@ -215,8 +215,9 @@ int main(int argc, char* argv[]) {
    // pos = malloc(n*sizeof(vect_t));
 
    loc_masses = malloc(loc_n * sizeof(double));
-   loc_pos = pos + my_rank*loc_n;
+   loc_pos    = malloc(loc_n * sizeof(vect_t));
    loc_forces = malloc(loc_n*sizeof(vect_t));
+   // loc_pos = pos + my_rank*loc_n;
    loc_vel = malloc(loc_n*sizeof(vect_t));
 
    if (my_rank == 0) vel = malloc(n*sizeof(vect_t));
