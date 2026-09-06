@@ -74,12 +74,19 @@
 
 typedef double vect_t[DIM];  /* Vector type for position, etc. */
 
+/* Data structure to package mass and position for ring transmission */
+typedef struct {
+   double mass;
+   vect_t pos;
+} part_blk_t;
+
 /* Global variables.  Except or vel all are unchanged after being set */
 const double G = 6.673e-11;  /* Gravitational constant. */
                              /* Units are m^3/(kg*s^2)  */
 int my_rank, comm_sz;
 MPI_Comm comm;
 MPI_Datatype vect_mpi_t;
+MPI_Datatype part_blk_mpi_t; /* Datatype for part_blk_t */
 
 /* Scratch array used by process 0 for global velocity I/O */
 vect_t *vel = NULL;
@@ -211,6 +218,10 @@ int main(int argc, char* argv[]) {
    MPI_Type_contiguous(DIM, MPI_DOUBLE, &vect_mpi_t);
    MPI_Type_commit(&vect_mpi_t);
 
+   /* Register contiguous MPI datatype for part_blk_t */
+   MPI_Type_contiguous(sizeof(part_blk_t) / sizeof(double), MPI_DOUBLE, &part_blk_mpi_t);
+   MPI_Type_commit(&part_blk_mpi_t);
+
    if (g_i == 'i')
       Get_init_cond(masses, pos, loc_vel, n, loc_n);
    else
@@ -240,6 +251,9 @@ int main(int argc, char* argv[]) {
       printf("Elapsed time = %e seconds\n", finish-start);
 
    MPI_Type_free(&vect_mpi_t);
+
+   MPI_Type_free(&part_blk_mpi_t);
+
    free(masses);
    free(pos);
    free(loc_forces);
