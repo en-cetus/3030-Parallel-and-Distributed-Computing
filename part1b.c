@@ -124,8 +124,8 @@ void Compute_local_force_stage0(double masses[], vect_t loc_pos[],
       loc_forces[i][Y] = 0.0;
       for (k = 0; k < loc_n; k++) {
          if (i != k) { /* 自碰撞防范：跳过自己对自己的引力计算 */
-            f_part_k[X] = loc_pos[i][X] - loc_pos[k][X];
-            f_part_k[Y] = loc_pos[i][Y] - loc_pos[k][Y];
+            f_part_k[X] = loc_pos[k][X] - loc_pos[i][X];
+            f_part_k[Y] = loc_pos[k][Y] - loc_pos[i][Y];
             len = sqrt(f_part_k[X]*f_part_k[X] + f_part_k[Y]*f_part_k[Y]);
             len_3 = len * len * len;
             mg = -G * masses[i] * masses[k];
@@ -184,10 +184,10 @@ int main(int argc, char* argv[]) {
    int output_freq;            /* Frequency of output        */
    double delta_t;             /* Size of timestep           */
    double t;                   /* Current Time               */
-   // double* masses;             /* All the masses             */
+   double* masses;             /* All the masses             */
    double* loc_masses;
    vect_t* loc_pos;            /* Positions of my particles  */
-   // vect_t* pos;                /* Positions of all particles */
+   vect_t* pos;                /* Positions of all particles */
    vect_t* loc_vel;            /* Velocities of my particles */
    vect_t* loc_forces;         /* Forces on my particles     */
 
@@ -227,6 +227,13 @@ int main(int argc, char* argv[]) {
    /* Register contiguous MPI datatype for part_blk_t */
    MPI_Type_contiguous(sizeof(part_blk_t) / sizeof(double), MPI_DOUBLE, &part_blk_mpi_t);
    MPI_Type_commit(&part_blk_mpi_t);
+
+/* ==================== DEBUG part_blk_t struct, loc_masses, loc_pos  ==================== */
+#  ifdef DEBUG
+   printf("Rank %d: Allocated loc_n = %d particles. Struct size = %lu bytes\n",
+          my_rank, loc_n, sizeof(part_blk_t));
+#  endif
+/* =================================================== */
 
    if (g_i == 'i')
       Get_init_cond(masses, pos, loc_vel, n, loc_n);
