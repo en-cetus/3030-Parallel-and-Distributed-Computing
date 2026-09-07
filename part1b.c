@@ -211,6 +211,15 @@ int main(int argc, char* argv[]) {
    Get_args(argc, argv, &n, &n_steps, &delta_t, &output_freq, &g_i);
    loc_n = n/comm_sz;  /* n should be evenly divisible by comm_sz */
 
+   /* Ring topology neighbors */
+   int next = (my_rank + 1) % comm_sz;
+   int previous = (my_rank - 1 + comm_sz) % comm_sz;
+   int stage;
+
+   /* 正确位置：在 loc_n 算出后再进行缓冲区内存分配 */
+   part_blk_t *send_buf = malloc(loc_n * sizeof(part_blk_t));
+   part_blk_t *recv_buf = malloc(loc_n * sizeof(part_blk_t));
+
    // masses = malloc(n*sizeof(double));
    // pos = malloc(n*sizeof(vect_t));
 
@@ -244,19 +253,75 @@ int main(int argc, char* argv[]) {
 #  ifndef NO_OUTPUT
    Output_state(0.0, masses, pos, loc_vel, n, loc_n);
 #  endif
-   for (step = 1; step <= n_steps; step++) {
-      t = step*delta_t;
-      for (loc_part = 0; loc_part < loc_n; loc_part++)
-         Compute_force(loc_part, masses, loc_forces, pos, n, loc_n);
-      for (loc_part = 0; loc_part < loc_n; loc_part++)
-         Update_part(loc_part, masses, loc_forces, loc_pos, loc_vel,
-               n, loc_n, delta_t);
-      MPI_Allgather(MPI_IN_PLACE, loc_n, vect_mpi_t,
-                    pos, loc_n, vect_mpi_t, comm);
-#     ifndef NO_OUTPUT
-      if (step % output_freq == 0)
-         Output_state(t, masses, pos, loc_vel, n, loc_n);
-#     endif
+
+/* Temporarily hard-code the initialization of local data to prevent crashes caused by null pointers; intended solely for communication testing. */
+   // for (loc_part = 0; loc_part < loc_n; loc_part++) {
+   //    loc_masses[loc_part] = 5.0e24;
+   //    loc_pos[loc_part][X] = (my_rank * loc_n + loc_part) * 1.0e5;
+   //    loc_pos[loc_part][Y] = 0.0;
+   // }
+
+   // start = MPI_Wtime();
+/*=================================================================*/
+
+
+//    for (step = 1; step <= n_steps; step++) {
+//       t = step*delta_t;
+//       for (loc_part = 0; loc_part < loc_n; loc_part++)
+//          Compute_force(loc_part, masses, loc_forces, pos, n, loc_n);
+//       for (loc_part = 0; loc_part < loc_n; loc_part++)
+//          Update_part(loc_part, masses, loc_forces, loc_pos, loc_vel,
+//                n, loc_n, delta_t);
+//       MPI_Allgather(MPI_IN_PLACE, loc_n, vect_mpi_t,
+//                     pos, loc_n, vect_mpi_t, comm);
+// #     ifndef NO_OUTPUT
+//       if (step % output_freq == 0)
+//          Output_state(t, masses, pos, loc_vel, n, loc_n);
+// #     endif
+//    }
+
+      for (step = 1; step <= n_steps; step++) {
+      t = step * delta_t;
+
+      /* 清零局部受力数组 */
+      for (loc_part = 0; loc_part < loc_n; loc_part++) {
+         loc_forces[loc_part][X] = 0.0;
+         loc_forces[loc_part][Y] = 0.0;
+      }
+
+      /* Stage 0: 本地受力计算 */
+      Compute_local_force_stage0(loc_masses, loc_pos, loc_forces, loc_n, my_rank);
+
+      /* 打包本地粒子数据进发送缓冲区 */
+      for (loc_part = 0; loc_part < loc_n; loc_part++) {
+         send_buf[loc_part].mass = loc_masses[loc_part];
+         send_buf[loc_part].pos[X] = loc_pos[loc_part][X];
+         send_buf[loc_part].pos[Y] = loc_pos[loc_part][Y];
+      }
+
+      /* Stage 1 ~ P-1 环形传输与 Debug 打印 */
+      for (stage = 1; stage < comm_sz; stage++) {
+         MPI_Sendrecv(send_buf, loc_n, part_blk_mpi_t, next, 0,
+                      recv_buf, loc_n, part_blk_mpi_t, previous, 0,
+                      comm, MPI_STATUS_IGNORE);
+
+#        ifdef DEBUG
+         printf("Rank %d Stage %d: Received mass of first particle = %e\n",
+                my_rank, stage, recv_buf[0].mass);
+#        endif
+
+         /* 先验证通信 */
+         // Compute_remote_force(recv_buf, loc_pos, loc_masses, loc_forces, loc_n);
+
+         /* 将刚收到的数据复制到发送缓冲区，然后传递给下一个进程 */
+         memcpy(send_buf, recv_buf, loc_n * sizeof(part_blk_t));
+      }
+
+      /* 更新本地粒子的位置和速度 */
+      for (loc_part = 0; loc_part < loc_n; loc_part++) {
+         Update_part(loc_part, loc_masses, loc_forces, loc_pos, loc_vel,
+                     n, loc_n, delta_t);
+      }
    }
 
    finish = MPI_Wtime();
@@ -275,6 +340,9 @@ int main(int argc, char* argv[]) {
    free(loc_forces);
    free(loc_vel);
    if (my_rank == 0) free(vel);
+
+   free(send_buf);
+   free(recv_buf);
 
    MPI_Finalize();
 
