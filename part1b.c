@@ -254,14 +254,18 @@ int main(int argc, char* argv[]) {
    Output_state(0.0, masses, pos, loc_vel, n, loc_n);
 #  endif
 
-/* Temporarily hard-code the initialization of local data to prevent crashes caused by null pointers; intended solely for communication testing. */
-   // for (loc_part = 0; loc_part < loc_n; loc_part++) {
-   //    loc_masses[loc_part] = 5.0e24;
-   //    loc_pos[loc_part][X] = (my_rank * loc_n + loc_part) * 1.0e5;
-   //    loc_pos[loc_part][Y] = 0.0;
-   // }
+/* ==================== Temporary Initialization ==================== */
+   for (loc_part = 0; loc_part < loc_n; loc_part++) {
+      loc_masses[loc_part] = 5.0e24;
+      loc_pos[loc_part][X] = (my_rank * loc_n + loc_part) * 1.0e5;
+      loc_pos[loc_part][Y] = 0.0;
 
-   // start = MPI_Wtime();
+      /* 给速度赋干净的初始值 0.0，防止未初始化内存产生垃圾数值导致 NaN 崩溃 */
+      loc_vel[loc_part][X] = 0.0;
+      loc_vel[loc_part][Y] = 0.0;
+   }
+
+   start = MPI_Wtime();
 /*=================================================================*/
 
 
@@ -621,15 +625,16 @@ void Compute_force(int loc_part, double masses[], vect_t loc_forces[],
  * Note:  This version uses Euler's method to update both the velocity
  *    and the position.
  */
-void Update_part(int loc_part, double masses[], vect_t loc_forces[],
+void Update_part(int loc_part, double loc_masses[], vect_t loc_forces[],
       vect_t loc_pos[], vect_t loc_vel[], int n, int loc_n,
       double delta_t) {
-   int part;
    double fact;
 
-   part = my_rank*loc_n + loc_part;
-   fact = delta_t/masses[part];
+   /* 使用局部的 loc_masses[loc_part]，不再访问全局 masses */
+   fact = delta_t / loc_masses[loc_part];
+
 #  ifdef DEBUG
+   int part = my_rank*loc_n + loc_part;
    printf("Proc %d > Before update of %d:\n", my_rank, part);
    printf("   Position  = (%.3e, %.3e)\n",
          loc_pos[loc_part][X], loc_pos[loc_part][Y]);
@@ -638,10 +643,12 @@ void Update_part(int loc_part, double masses[], vect_t loc_forces[],
    printf("   Net force = (%.3e, %.3e)\n",
          loc_forces[loc_part][X], loc_forces[loc_part][Y]);
 #  endif
+
    loc_pos[loc_part][X] += delta_t * loc_vel[loc_part][X];
    loc_pos[loc_part][Y] += delta_t * loc_vel[loc_part][Y];
    loc_vel[loc_part][X] += fact * loc_forces[loc_part][X];
    loc_vel[loc_part][Y] += fact * loc_forces[loc_part][Y];
+
 #  ifdef DEBUG
    printf("Proc %d > Position of %d = (%.3e, %.3e), Velocity = (%.3e,%.3e)\n",
          my_rank, part, loc_pos[loc_part][X], loc_pos[loc_part][Y],
