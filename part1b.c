@@ -94,9 +94,9 @@ vect_t *vel = NULL;
 void Usage(char* prog_name);
 void Get_args(int argc, char* argv[], int* n_p, int* n_steps_p,
       double* delta_t_p, int* output_freq_p, char* g_i_p);
-void Get_init_cond(double masses[], vect_t pos[],
+void Get_init_cond(double loc_masses[], vect_t loc_pos[],
       vect_t loc_vel[], int n, int loc_n);
-void Gen_init_cond(double masses[], vect_t pos[],
+void Gen_init_cond(double loc_masses[], vect_t loc_pos[],
       vect_t loc_vel[], int n, int loc_n);
 void Output_state(double time, double masses[], vect_t pos[],
       vect_t loc_vel[], int n, int loc_n);
@@ -200,8 +200,98 @@ void Run_Stage0_Unit_Test(int my_rank) {
       }
       printf("=====================================================\n\n");
    }
+
+
 }
+
+/*---------------------------------------------------------------------
+ * Function: Run_Gen_Init_Cond_Unit_Test
+ * Purpose:  Unit test for Gen_init_cond to verify O(N/P) local initialization.
+ */
+void Run_Gen_Init_Cond_Unit_Test(int my_rank, int comm_sz) {
+   int n = 12;
+   int loc_n = n / comm_sz;
+   double test_loc_masses[3];
+   vect_t test_loc_pos[3];
+   vect_t test_loc_vel[3];
+
+   /* 调用待测函数 */
+   Gen_init_cond(test_loc_masses, test_loc_pos, test_loc_vel, n, loc_n);
+
+   /* 理论期望值计算：当前进程的第 0 个粒子在全局中的 ID 为 (my_rank * loc_n) */
+   int expected_global_id = my_rank * loc_n;
+   double expected_x = expected_global_id * 1.0e5;
+   double expected_vy = (expected_global_id % 2 == 0) ? 3.0e4 : -3.0e4;
+
+   /* 验证本地第 0 个粒子的质量、位置与速度 */
+   int pass = 1;
+   if (fabs(test_loc_masses[0] - 5.0e24) > 1.0e18) pass = 0;
+   if (fabs(test_loc_pos[0][X] - expected_x) > 1.0e-3) pass = 0;
+   if (fabs(test_loc_vel[0][Y] - expected_vy) > 1.0e-3) pass = 0;
+
+   if (pass) {
+      printf("[PASS] Rank %d: Gen_init_cond Test PASSED! (First Part Global ID=%d, PosX=%.1e, VelY=%.1e)\n",
+             my_rank, expected_global_id, test_loc_pos[0][X], test_loc_vel[0][Y]);
+   } else {
+      printf("[FAIL] Rank %d: Gen_init_cond Test FAILED! Got PosX=%.1e, VelY=%.1e\n",
+             my_rank, test_loc_pos[0][X], test_loc_vel[0][Y]);
+   }
+}
+
+
+/*---------------------------------------------------------------------
+ * Function: Run_Get_Init_Cond_Unit_Test
+ * Purpose:  Unit test for Get_init_cond scattering logic.
+ */
+void Run_Get_Init_Cond_Unit_Test(int my_rank, int comm_sz) {
+   int n = 12;
+   int loc_n = n / comm_sz;
+   double test_loc_masses[3];
+   vect_t test_loc_pos[3];
+   vect_t test_loc_vel[3];
+
+   double* temp_masses = NULL;
+   vect_t* temp_pos = NULL;
+   vect_t* temp_vel = NULL;
+
+   if (my_rank == 0) {
+      temp_masses = malloc(n * sizeof(double));
+      temp_pos = malloc(n * sizeof(vect_t));
+      temp_vel = malloc(n * sizeof(vect_t));
+      for (int i = 0; i < n; i++) {
+         temp_masses[i] = 5.0e24;
+         temp_pos[i][X] = i * 1.0e5;
+         temp_pos[i][Y] = 0.0;
+         temp_vel[i][X] = 0.0;
+         temp_vel[i][Y] = (i % 2 == 0) ? 3.0e4 : -3.0e4;
+      }
+   }
+
+   /* 执行 Scatter 分发测试 */
+   MPI_Scatter(temp_masses, loc_n, MPI_DOUBLE, test_loc_masses, loc_n, MPI_DOUBLE, 0, comm);
+   MPI_Scatter(temp_pos, loc_n, vect_mpi_t, test_loc_pos, loc_n, vect_mpi_t, 0, comm);
+   MPI_Scatter(temp_vel, loc_n, vect_mpi_t, test_loc_vel, loc_n, vect_mpi_t, 0, comm);
+
+   if (my_rank == 0) {
+      free(temp_masses);
+      free(temp_pos);
+      free(temp_vel);
+   }
+
+   /* 验证本地第一条数据 */
+   int expected_id = my_rank * loc_n;
+   int pass = (fabs(test_loc_pos[0][X] - expected_id * 1.0e5) < 1.0e-3);
+
+   if (pass) {
+      printf("[PASS] Rank %d: Get_init_cond Scatter Test PASSED! (First PosX=%.1e)\n",
+             my_rank, test_loc_pos[0][X]);
+   } else {
+      printf("[FAIL] Rank %d: Get_init_cond Scatter Test FAILED!\n", my_rank);
+   }
+}
+
 #endif
+
 
 
 
@@ -230,10 +320,18 @@ int main(int argc, char* argv[]) {
    MPI_Comm_size(comm, &comm_sz);
    MPI_Comm_rank(comm, &my_rank);
 
+   /* Register the vect_mpi_t type for use in both unit testing and production programs. */
+   MPI_Type_contiguous(DIM, MPI_DOUBLE, &vect_mpi_t);
+   MPI_Type_commit(&vect_mpi_t);
 
    #  ifdef DEBUG_TEST
       /* 如果编译时开启了 -DDEBUG_TEST，仅运行单元测试后直接退出 */
       Run_Stage0_Unit_Test(my_rank);
+      /* 运行 Get/Gen_init_cond 单元测试 */
+      Run_Gen_Init_Cond_Unit_Test(my_rank, comm_sz);
+      Run_Get_Init_Cond_Unit_Test(my_rank, comm_sz);
+
+      MPI_Type_free(&vect_mpi_t);
       MPI_Finalize();
       return 0;
    #  endif
@@ -285,19 +383,27 @@ int main(int argc, char* argv[]) {
 //    Output_state(0.0, masses, pos, loc_vel, n, loc_n);
 // #  endif
 
-/* ==================== Temporary Initialization ==================== */
-   for (loc_part = 0; loc_part < loc_n; loc_part++) {
-      loc_masses[loc_part] = 5.0e24;
-      loc_pos[loc_part][X] = (my_rank * loc_n + loc_part) * 1.0e5;
-      loc_pos[loc_part][Y] = 0.0;
+// /* ==================== Temporary Initialization ==================== */
+//    for (loc_part = 0; loc_part < loc_n; loc_part++) {
+//       loc_masses[loc_part] = 5.0e24;
+//       loc_pos[loc_part][X] = (my_rank * loc_n + loc_part) * 1.0e5;
+//       loc_pos[loc_part][Y] = 0.0;
 
-      /* 给速度赋干净的初始值 0.0，防止未初始化内存产生垃圾数值导致 NaN 崩溃 */
-      loc_vel[loc_part][X] = 0.0;
-      loc_vel[loc_part][Y] = 0.0;
-   }
+//       /* 给速度赋干净的初始值 0.0，防止未初始化内存产生垃圾数值导致 NaN 崩溃 */
+//       loc_vel[loc_part][X] = 0.0;
+//       loc_vel[loc_part][Y] = 0.0;
+//    }
+
+//    start = MPI_Wtime();
+// /*=================================================================*/
+
+
+if (g_i == 'i')
+      Get_init_cond(loc_masses, loc_pos, loc_vel, n, loc_n);
+   else
+      Gen_init_cond(loc_masses, loc_pos, loc_vel, n, loc_n);
 
    start = MPI_Wtime();
-/*=================================================================*/
 
 
 //    for (step = 1; step <= n_steps; step++) {
@@ -460,88 +566,68 @@ void Get_args(int argc, char* argv[], int* n_p, int* n_steps_p,
 
 /*---------------------------------------------------------------------
  * Function:   Get_init_cond
- * Purpose:    Read in initial conditions:  mass, position and velocity
- *             for each particle
- * In args:
- *    n:       total number of particles
- *    loc_n:   number of particles assigned to this process
- * Out args:
- *    masses:  global array of the masses of the particles
- *    pos:     global array of positions
- *    loc_vel: local array of velocities assigned to this process.
- *
- * Global var:
- *    vel:     Scratch.  Used by process 0 for global velocities
+ * Purpose:    Read in initial conditions: mass, position and velocity
+ *             for each particle from stdin, and scatter to local arrays.
  */
-void Get_init_cond(double masses[], vect_t pos[],
-     vect_t loc_vel[], int n, int loc_n) {
+void Get_init_cond(double loc_masses[], vect_t loc_pos[],
+                  vect_t loc_vel[], int n, int loc_n) {
    int part;
+   double* temp_masses = NULL;
+   vect_t* temp_pos = NULL;
 
    if (my_rank == 0) {
+      temp_masses = malloc(n * sizeof(double));
+      temp_pos = malloc(n * sizeof(vect_t));
+
       printf("For each particle, enter (in order):\n");
       printf("   its mass, its x-coord, its y-coord, ");
       printf("its x-velocity, its y-velocity\n");
       for (part = 0; part < n; part++) {
-         scanf("%lf", &masses[part]);
-         scanf("%lf", &pos[part][X]);
-         scanf("%lf", &pos[part][Y]);
+         scanf("%lf", &temp_masses[part]);
+         scanf("%lf", &temp_pos[part][X]);
+         scanf("%lf", &temp_pos[part][Y]);
          scanf("%lf", &vel[part][X]);
          scanf("%lf", &vel[part][Y]);
       }
    }
-   MPI_Bcast(masses, n, MPI_DOUBLE, 0, comm);
-   MPI_Bcast(pos, n, vect_mpi_t, 0, comm);
-   MPI_Scatter(vel, loc_n, vect_mpi_t,
-         loc_vel, loc_n, vect_mpi_t, 0, comm);
+
+   /* Rank0 将数据 Scatter 给各个进程的局部数组 */
+   MPI_Scatter(temp_masses, loc_n, MPI_DOUBLE, loc_masses, loc_n, MPI_DOUBLE, 0, comm);
+   MPI_Scatter(temp_pos, loc_n, vect_mpi_t, loc_pos, loc_n, vect_mpi_t, 0, comm);
+   MPI_Scatter(vel, loc_n, vect_mpi_t, loc_vel, loc_n, vect_mpi_t, 0, comm);
+
+   if (my_rank == 0) {
+      free(temp_masses);
+      free(temp_pos);
+   }
 }  /* Get_init_cond */
 
+
 /*---------------------------------------------------------------------
- * Function:  Gen_init_cond
- * Purpose:   Generate initial conditions:  mass, position and velocity
- *            for each particle
- * In args:
- *    n:       total number of particles
- *    loc_n:   number of particles assigned to this process
- * Out args:
- *    masses:  global array of the masses of the particles
- *    pos:     global array of positions
- *    loc_vel: local array of velocities assigned to this process.
- * Global var:
- *    vel:     Scratch.  Used by process 0 for global velocities
- *
- * Note:      The initial conditions place all particles at
- *            equal intervals on the nonnegative x-axis with
- *            identical masses, and identical initial speeds
- *            parallel to the y-axis.  However, some of the
- *            velocities are in the positive y-direction and
- *            some are negative.
+ * Function:   Gen_init_cond
+ * Purpose:    Generate initial conditions locally for each process.
  */
-void Gen_init_cond(double masses[], vect_t pos[],
-      vect_t loc_vel[], int n, int loc_n) {
-   int part;
+void Gen_init_cond(double loc_masses[], vect_t loc_pos[],
+                  vect_t loc_vel[], int n, int loc_n) {
+   int loc_part, global_part;
    double mass = 5.0e24;
    double gap = 1.0e5;
    double speed = 3.0e4;
 
-   if (my_rank == 0) {
-//    srandom(1);
-      for (part = 0; part < n; part++) {
-         masses[part] = mass;
-         pos[part][X] = part*gap;
-         pos[part][Y] = 0.0;
-         vel[part][X] = 0.0;
-//       if (random()/((double) RAND_MAX) >= 0.5)
-         if (part % 2 == 0)
-            vel[part][Y] = speed;
-         else
-            vel[part][Y] = -speed;
-      }
-   }
+   for (loc_part = 0; loc_part < loc_n; loc_part++) {
+      /* 计算当前局部粒子对应的全局 ID */
+      global_part = my_rank * loc_n + loc_part;
 
-   MPI_Bcast(masses, n, MPI_DOUBLE, 0, comm);
-   MPI_Bcast(pos, n, vect_mpi_t, 0, comm);
-   MPI_Scatter(vel, loc_n, vect_mpi_t,
-         loc_vel, loc_n, vect_mpi_t, 0, comm);
+      loc_masses[loc_part] = mass;
+      loc_pos[loc_part][X] = global_part * gap;
+      loc_pos[loc_part][Y] = 0.0;
+
+      loc_vel[loc_part][X] = 0.0;
+      if (global_part % 2 == 0)
+         loc_vel[loc_part][Y] = speed;
+      else
+         loc_vel[loc_part][Y] = -speed;
+   }
 }  /* Gen_init_cond */
 
 
