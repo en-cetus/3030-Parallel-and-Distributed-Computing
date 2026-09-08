@@ -126,6 +126,7 @@ void Compute_local_force_stage0(double masses[], vect_t loc_pos[],
          if (i != k) { /* 自碰撞防范：跳过自己对自己的引力计算 */
             f_part_k[X] = loc_pos[k][X] - loc_pos[i][X];
             f_part_k[Y] = loc_pos[k][Y] - loc_pos[i][Y];
+
             len = sqrt(f_part_k[X]*f_part_k[X] + f_part_k[Y]*f_part_k[Y]);
             len_3 = len * len * len;
             mg = -G * masses[i] * masses[k];
@@ -134,6 +135,36 @@ void Compute_local_force_stage0(double masses[], vect_t loc_pos[],
             loc_forces[i][X] += f_part_k[X] * fact;
             loc_forces[i][Y] += f_part_k[Y] * fact;
          }
+      }
+   }
+}
+
+/*---------------------------------------------------------------------
+ * Function: Compute_remote_force
+ * Purpose:  Compute forces exerted by received remote particle blocks
+ *           on local particles and ACCUMULATE them into loc_forces.
+ */
+void Compute_remote_force(part_blk_t recv_buf[], vect_t loc_pos[],
+                         double loc_masses[], vect_t loc_forces[],
+                         int loc_n) {
+   int i, k;
+   double mg, len, len_3, fact;
+   vect_t f_part_k;
+
+   for (i = 0; i < loc_n; i++) {
+      for (k = 0; k < loc_n; k++) {
+         /* 矢量方向：远程粒子位置 - 本地粒子位置 */
+         f_part_k[X] = recv_buf[k].pos[X] - loc_pos[i][X];
+         f_part_k[Y] = recv_buf[k].pos[Y] - loc_pos[i][Y];
+
+         len = sqrt(f_part_k[X]*f_part_k[X] + f_part_k[Y]*f_part_k[Y]);
+         len_3 = len * len * len;
+         mg = -G * loc_masses[i] * recv_buf[k].mass;
+         fact = mg / len_3;
+
+         /* 受力累加 (+=) */
+         loc_forces[i][X] += f_part_k[X] * fact;
+         loc_forces[i][Y] += f_part_k[Y] * fact;
       }
    }
 }
@@ -244,15 +275,15 @@ int main(int argc, char* argv[]) {
 #  endif
 /* =================================================== */
 
-   if (g_i == 'i')
-      Get_init_cond(masses, pos, loc_vel, n, loc_n);
-   else
-      Gen_init_cond(masses, pos, loc_vel, n, loc_n);
+//    if (g_i == 'i')
+//       Get_init_cond(masses, pos, loc_vel, n, loc_n);
+//    else
+//       Gen_init_cond(masses, pos, loc_vel, n, loc_n);
 
-   start = MPI_Wtime();
-#  ifndef NO_OUTPUT
-   Output_state(0.0, masses, pos, loc_vel, n, loc_n);
-#  endif
+//    start = MPI_Wtime();
+// #  ifndef NO_OUTPUT
+//    Output_state(0.0, masses, pos, loc_vel, n, loc_n);
+// #  endif
 
 /* ==================== Temporary Initialization ==================== */
    for (loc_part = 0; loc_part < loc_n; loc_part++) {
@@ -315,7 +346,7 @@ int main(int argc, char* argv[]) {
 #        endif
 
          /* 先验证通信 */
-         // Compute_remote_force(recv_buf, loc_pos, loc_masses, loc_forces, loc_n);
+         Compute_remote_force(recv_buf, loc_pos, loc_masses, loc_forces, loc_n);
 
          /* 将刚收到的数据复制到发送缓冲区，然后传递给下一个进程 */
          memcpy(send_buf, recv_buf, loc_n * sizeof(part_blk_t));
