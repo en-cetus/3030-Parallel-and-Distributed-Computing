@@ -129,7 +129,7 @@ void Compute_local_force_stage0(double masses[], vect_t loc_pos[],
 
             len = sqrt(f_part_k[X]*f_part_k[X] + f_part_k[Y]*f_part_k[Y]);
             len_3 = len * len * len;
-            mg = -G * masses[i] * masses[k];
+            mg = G * masses[i] * masses[k];
             fact = mg / len_3;
 
             loc_forces[i][X] += f_part_k[X] * fact;
@@ -159,7 +159,7 @@ void Compute_remote_force(part_blk_t recv_buf[], vect_t loc_pos[],
 
          len = sqrt(f_part_k[X]*f_part_k[X] + f_part_k[Y]*f_part_k[Y]);
          len_3 = len * len * len;
-         mg = -G * loc_masses[i] * recv_buf[k].mass;
+         mg = G * loc_masses[i] * recv_buf[k].mass;
          fact = mg / len_3;
 
          /* 受力累加 (+=) */
@@ -507,7 +507,6 @@ if (g_i == 'i')
       printf("Elapsed time = %e seconds\n", finish-start);
 
    MPI_Type_free(&vect_mpi_t);
-
    MPI_Type_free(&part_blk_mpi_t);
 
    // free(masses);
