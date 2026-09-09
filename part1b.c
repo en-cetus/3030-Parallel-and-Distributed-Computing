@@ -98,8 +98,8 @@ void Get_init_cond(double loc_masses[], vect_t loc_pos[],
       vect_t loc_vel[], int n, int loc_n);
 void Gen_init_cond(double loc_masses[], vect_t loc_pos[],
       vect_t loc_vel[], int n, int loc_n);
-void Output_state(double time, double masses[], vect_t pos[],
-      vect_t loc_vel[], int n, int loc_n);
+void Output_state(double time, vect_t loc_pos[], vect_t loc_vel[],
+                  int n, int loc_n);
 void Compute_force(int loc_part, double masses[], vect_t loc_forces[],
       vect_t pos[], int n, int loc_n);
 void Update_part(int loc_part, double masses[], vect_t loc_forces[],
@@ -290,6 +290,31 @@ void Run_Get_Init_Cond_Unit_Test(int my_rank, int comm_sz) {
    }
 }
 
+/*---------------------------------------------------------------------
+ * Function: Run_Output_State_Unit_Test
+ * Purpose:  Unit test to verify Output_state gather logic without crash.
+ */
+void Run_Output_State_Unit_Test(int my_rank, int comm_sz) {
+   int n = 12;
+   int loc_n = n / comm_sz;
+   vect_t test_loc_pos[3] = {{1.0, 2.0}, {3.0, 4.0}, {5.0, 6.0}};
+   vect_t test_loc_vel[3] = {{0.1, 0.2}, {0.3, 0.4}, {0.5, 0.6}};
+
+   /* 为全局 vel 指针提前分配临时缓冲区，防止 Gather 空指针崩溃 */
+   if (my_rank == 0) {
+      vel = malloc(n * sizeof(vect_t));
+      printf("\nTesting Output_state Gather & Print...\n");
+   }
+
+   /* 调用 Output_state，验证聚集过程 */
+   Output_state(0.0, test_loc_pos, test_loc_vel, n, loc_n);
+
+   if (my_rank == 0) {
+      printf("[PASS] Output_state Unit Test Executed Successfully!\n");
+      free(vel);
+      vel = NULL;
+   }
+}
 #endif
 
 
@@ -305,10 +330,10 @@ int main(int argc, char* argv[]) {
    int output_freq;            /* Frequency of output        */
    double delta_t;             /* Size of timestep           */
    double t;                   /* Current Time               */
-   double* masses;             /* All the masses             */
+   // double* masses;             /* All the masses             */
    double* loc_masses;
    vect_t* loc_pos;            /* Positions of my particles  */
-   vect_t* pos;                /* Positions of all particles */
+   // vect_t* pos;                /* Positions of all particles */
    vect_t* loc_vel;            /* Velocities of my particles */
    vect_t* loc_forces;         /* Forces on my particles     */
 
@@ -330,6 +355,7 @@ int main(int argc, char* argv[]) {
       /* 运行 Get/Gen_init_cond 单元测试 */
       Run_Gen_Init_Cond_Unit_Test(my_rank, comm_sz);
       Run_Get_Init_Cond_Unit_Test(my_rank, comm_sz);
+      Run_Output_State_Unit_Test(my_rank, comm_sz);
 
       MPI_Type_free(&vect_mpi_t);
       MPI_Finalize();
@@ -380,7 +406,8 @@ int main(int argc, char* argv[]) {
 
 //    start = MPI_Wtime();
 // #  ifndef NO_OUTPUT
-//    Output_state(0.0, masses, pos, loc_vel, n, loc_n);
+//    if (step % output_freq == 0)
+//       Output_state(t, loc_pos, loc_vel, n, loc_n);
 // #  endif
 
 // /* ==================== Temporary Initialization ==================== */
@@ -405,6 +432,10 @@ if (g_i == 'i')
 
    start = MPI_Wtime();
 
+#  ifndef NO_OUTPUT
+   Output_state(0.0, loc_pos, loc_vel, n, loc_n);
+#  endif
+
 
 //    for (step = 1; step <= n_steps; step++) {
 //       t = step*delta_t;
@@ -416,8 +447,8 @@ if (g_i == 'i')
 //       MPI_Allgather(MPI_IN_PLACE, loc_n, vect_mpi_t,
 //                     pos, loc_n, vect_mpi_t, comm);
 // #     ifndef NO_OUTPUT
-//       if (step % output_freq == 0)
-//          Output_state(t, masses, pos, loc_vel, n, loc_n);
+//          if (step % output_freq == 0)
+//             Output_state(t, masses, pos, loc_vel, n, loc_n);
 // #     endif
 //    }
 
@@ -463,6 +494,12 @@ if (g_i == 'i')
          Update_part(loc_part, loc_masses, loc_forces, loc_pos, loc_vel,
                      n, loc_n, delta_t);
       }
+#     ifndef NO_OUTPUT
+      /* 传入局部 loc_pos 和 loc_vel */
+      if (step % output_freq == 0)
+         Output_state(t, loc_pos, loc_vel, n, loc_n);
+#     endif
+
    }
 
    finish = MPI_Wtime();
@@ -633,31 +670,40 @@ void Gen_init_cond(double loc_masses[], vect_t loc_pos[],
 
 /*---------------------------------------------------------------------
  * Function:   Output_state
- * Purpose:    Print the current state of the system
+ * Purpose:    Gather position and velocity data to Rank 0 and print system state
  * In args:
- *    time:    current time
- *    masses:  global array of particle masses
- *    pos:     global array of particle positions
- *    loc_vel: local array of my particle velocities
+ *    time:    current simulation time
+ *    loc_pos: local array of positions
+ *    loc_vel: local array of velocities
  *    n:       total number of particles
- *    loc_n:   number of my particles
+ *    loc_n:   number of particles assigned to this process
  */
-void Output_state(double time, double masses[], vect_t pos[],
-      vect_t loc_vel[], int n, int loc_n) {
+void Output_state(double time, vect_t loc_pos[], vect_t loc_vel[],
+                  int n, int loc_n) {
    int part;
+   vect_t *pos = NULL;
 
-   MPI_Gather(loc_vel, loc_n, vect_mpi_t, vel, loc_n, vect_mpi_t,
-         0, comm);
+   if (my_rank == 0) {
+      pos = malloc(n * sizeof(vect_t));
+   }
+
+   /* 1. 收集所有进程的位置信息到 Rank 0 */
+   MPI_Gather(loc_pos, loc_n, vect_mpi_t, pos, loc_n, vect_mpi_t, 0, comm);
+
+   /* 2. 收集所有进程的速度信息到 Rank 0 */
+   MPI_Gather(loc_vel, loc_n, vect_mpi_t, vel, loc_n, vect_mpi_t, 0, comm);
+
+   /* 3. 由 Rank 0 统一打印输出 */
    if (my_rank == 0) {
       printf("%.2f\n", time);
       for (part = 0; part < n; part++) {
-//       printf("%.3f ", masses[part]);
          printf("%3d %10.3e ", part, pos[part][X]);
          printf("  %10.3e ", pos[part][Y]);
          printf("  %10.3e ", vel[part][X]);
          printf("  %10.3e\n", vel[part][Y]);
       }
       printf("\n");
+      free(pos);
    }
 }  /* Output_state */
 
