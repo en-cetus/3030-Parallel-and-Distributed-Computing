@@ -123,7 +123,7 @@ void Compute_local_force_stage0(double masses[], vect_t loc_pos[],
       loc_forces[i][X] = 0.0;
       loc_forces[i][Y] = 0.0;
       for (k = 0; k < loc_n; k++) {
-         if (i != k) { /* 自碰撞防范：跳过自己对自己的引力计算 */
+         if (i != k) { /* Self-collision Prevention: Skip the gravity calculation between a body and itself */
             f_part_k[X] = loc_pos[k][X] - loc_pos[i][X];
             f_part_k[Y] = loc_pos[k][Y] - loc_pos[i][Y];
 
@@ -153,7 +153,7 @@ void Compute_remote_force(part_blk_t recv_buf[], vect_t loc_pos[],
 
    for (i = 0; i < loc_n; i++) {
       for (k = 0; k < loc_n; k++) {
-         /* 矢量方向：远程粒子位置 - 本地粒子位置 */
+         /* Vector direction: position of the remote particle − position of the local particle */
          f_part_k[X] = recv_buf[k].pos[X] - loc_pos[i][X];
          f_part_k[Y] = recv_buf[k].pos[Y] - loc_pos[i][Y];
 
@@ -162,7 +162,7 @@ void Compute_remote_force(part_blk_t recv_buf[], vect_t loc_pos[],
          mg = G * loc_masses[i] * recv_buf[k].mass;
          fact = mg / len_3;
 
-         /* 受力累加 (+=) */
+         /* Force Accumulation (+=) */
          loc_forces[i][X] += f_part_k[X] * fact;
          loc_forces[i][Y] += f_part_k[Y] * fact;
       }
@@ -179,20 +179,20 @@ void Run_Stage0_Unit_Test(int my_rank) {
       printf("\n================ [UNIT TEST RUNNING] ================\n");
       printf("Testing Stage 0 Force Computation (2-body dummy system)...\n");
 
-      /* 构造测试数据：2个固定粒子 */
+      /* Construction of test data: 2 fixed particles */
       double test_masses[2] = {5.0e24, 5.0e24};
       vect_t test_pos[2] = {{0.0, 0.0}, {1.0e5, 0.0}}; /* 相距 1.0e5 米 */
       vect_t test_forces[2];
 
-      /* 执行待测函数 */
+      /* Execute the function under test */
       Compute_local_force_stage0(test_masses, test_pos, test_forces, 2, 0);
 
-      /* 手动计算期望的理论受力值 F = G * m1 * m2 / r^2 */
+      /* Manual calculation of the theoretical expected stress value F = G * m1 * m2 / r^2 */
       /* F = (6.673e-11 * 5e24 * 5e24) / (1e5)^2 = 1.66825e29 N */
       double expected_fx = -1.66825e29;
       double error = fabs(test_forces[0][X] - expected_fx);
 
-      /* 容差判定 (Epsilon) */
+      /* Tolerance Judgment (Epsilon) */
       if (error < 1.0e24) {
          printf("[PASS] Stage 0 Force Test PASSED! Calculated Fx = %e\n", test_forces[0][X]);
       } else {
@@ -215,15 +215,15 @@ void Run_Gen_Init_Cond_Unit_Test(int my_rank, int comm_sz) {
    vect_t test_loc_pos[3];
    vect_t test_loc_vel[3];
 
-   /* 调用待测函数 */
+   /* Invoke the function under test */
    Gen_init_cond(test_loc_masses, test_loc_pos, test_loc_vel, n, loc_n);
 
-   /* 理论期望值计算：当前进程的第 0 个粒子在全局中的 ID 为 (my_rank * loc_n) */
+   /* Calculation of theoretical expected value: The global ID of the 0-th particle in the current process is (my_rank * loc_n) */
    int expected_global_id = my_rank * loc_n;
    double expected_x = expected_global_id * 1.0e5;
    double expected_vy = (expected_global_id % 2 == 0) ? 3.0e4 : -3.0e4;
 
-   /* 验证本地第 0 个粒子的质量、位置与速度 */
+   /* Validate the mass, position and velocity of the 0-th local particle */
    int pass = 1;
    if (fabs(test_loc_masses[0] - 5.0e24) > 1.0e18) pass = 0;
    if (fabs(test_loc_pos[0][X] - expected_x) > 1.0e-3) pass = 0;
@@ -267,7 +267,7 @@ void Run_Get_Init_Cond_Unit_Test(int my_rank, int comm_sz) {
       }
    }
 
-   /* 执行 Scatter 分发测试 */
+   /* Conduct Scatter Distribution Testing */
    MPI_Scatter(temp_masses, loc_n, MPI_DOUBLE, test_loc_masses, loc_n, MPI_DOUBLE, 0, comm);
    MPI_Scatter(temp_pos, loc_n, vect_mpi_t, test_loc_pos, loc_n, vect_mpi_t, 0, comm);
    MPI_Scatter(temp_vel, loc_n, vect_mpi_t, test_loc_vel, loc_n, vect_mpi_t, 0, comm);
@@ -278,7 +278,7 @@ void Run_Get_Init_Cond_Unit_Test(int my_rank, int comm_sz) {
       free(temp_vel);
    }
 
-   /* 验证本地第一条数据 */
+   /* Validate the first local entry of data */
    int expected_id = my_rank * loc_n;
    int pass = (fabs(test_loc_pos[0][X] - expected_id * 1.0e5) < 1.0e-3);
 
@@ -300,13 +300,13 @@ void Run_Output_State_Unit_Test(int my_rank, int comm_sz) {
    vect_t test_loc_pos[3] = {{1.0, 2.0}, {3.0, 4.0}, {5.0, 6.0}};
    vect_t test_loc_vel[3] = {{0.1, 0.2}, {0.3, 0.4}, {0.5, 0.6}};
 
-   /* 为全局 vel 指针提前分配临时缓冲区，防止 Gather 空指针崩溃 */
+   /* Pre-allocate a temporary buffer for the global `vel` pointer to prevent null-pointer crash in the Gather process. */
    if (my_rank == 0) {
       vel = malloc(n * sizeof(vect_t));
       printf("\nTesting Output_state Gather & Print...\n");
    }
 
-   /* 调用 Output_state，验证聚集过程 */
+   /* Invoke Output_state to validate the aggregation process. */
    Output_state(0.0, test_loc_pos, test_loc_vel, n, loc_n);
 
    if (my_rank == 0) {
@@ -350,9 +350,8 @@ int main(int argc, char* argv[]) {
    MPI_Type_commit(&vect_mpi_t);
 
    #  ifdef DEBUG_TEST
-      /* 如果编译时开启了 -DDEBUG_TEST，仅运行单元测试后直接退出 */
+      /*  -DDEBUG_TEST */
       Run_Stage0_Unit_Test(my_rank);
-      /* 运行 Get/Gen_init_cond 单元测试 */
       Run_Gen_Init_Cond_Unit_Test(my_rank, comm_sz);
       Run_Get_Init_Cond_Unit_Test(my_rank, comm_sz);
       Run_Output_State_Unit_Test(my_rank, comm_sz);
@@ -371,7 +370,7 @@ int main(int argc, char* argv[]) {
    int previous = (my_rank - 1 + comm_sz) % comm_sz;
    int stage;
 
-   /* 正确位置：在 loc_n 算出后再进行缓冲区内存分配 */
+   /* Correct Position: Buffer memory allocation shall be performed after the calculation of loc_n is completed. */
    part_blk_t *send_buf = malloc(loc_n * sizeof(part_blk_t));
    part_blk_t *recv_buf = malloc(loc_n * sizeof(part_blk_t));
 
@@ -416,7 +415,7 @@ int main(int argc, char* argv[]) {
 //       loc_pos[loc_part][X] = (my_rank * loc_n + loc_part) * 1.0e5;
 //       loc_pos[loc_part][Y] = 0.0;
 
-//       /* 给速度赋干净的初始值 0.0，防止未初始化内存产生垃圾数值导致 NaN 崩溃 */
+//       /* Assign a clean initial value of 0.0 to the velocity, to prevent NaN-induced crashes caused by garbage values originating from uninitialized memory. */
 //       loc_vel[loc_part][X] = 0.0;
 //       loc_vel[loc_part][Y] = 0.0;
 //    }
@@ -455,23 +454,23 @@ if (g_i == 'i')
       for (step = 1; step <= n_steps; step++) {
       t = step * delta_t;
 
-      /* 清零局部受力数组 */
+      /* Clear the local force array */
       for (loc_part = 0; loc_part < loc_n; loc_part++) {
          loc_forces[loc_part][X] = 0.0;
          loc_forces[loc_part][Y] = 0.0;
       }
 
-      /* Stage 0: 本地受力计算 */
+      /* Stage 0: Local Force Calculation */
       Compute_local_force_stage0(loc_masses, loc_pos, loc_forces, loc_n, my_rank);
 
-      /* 打包本地粒子数据进发送缓冲区 */
+      /* Package the local particle data into the transmission buffer */
       for (loc_part = 0; loc_part < loc_n; loc_part++) {
          send_buf[loc_part].mass = loc_masses[loc_part];
          send_buf[loc_part].pos[X] = loc_pos[loc_part][X];
          send_buf[loc_part].pos[Y] = loc_pos[loc_part][Y];
       }
 
-      /* Stage 1 ~ P-1 环形传输与 Debug 打印 */
+      /* Stage 1 ~ P-1 Ring Transmission and Debug Printing */
       for (stage = 1; stage < comm_sz; stage++) {
          MPI_Sendrecv(send_buf, loc_n, part_blk_mpi_t, next, 0,
                       recv_buf, loc_n, part_blk_mpi_t, previous, 0,
@@ -482,20 +481,20 @@ if (g_i == 'i')
                 my_rank, stage, recv_buf[0].mass);
 #        endif
 
-         /* 先验证通信 */
+         /* First, verify the communication. */
          Compute_remote_force(recv_buf, loc_pos, loc_masses, loc_forces, loc_n);
 
-         /* 将刚收到的数据复制到发送缓冲区，然后传递给下一个进程 */
+         /* Copy the newly received data to the transmission buffer and deliver it to the next process. */
          memcpy(send_buf, recv_buf, loc_n * sizeof(part_blk_t));
       }
 
-      /* 更新本地粒子的位置和速度 */
+      /* Update the position and velocity of local particles */
       for (loc_part = 0; loc_part < loc_n; loc_part++) {
          Update_part(loc_part, loc_masses, loc_forces, loc_pos, loc_vel,
                      n, loc_n, delta_t);
       }
 #     ifndef NO_OUTPUT
-      /* 传入局部 loc_pos 和 loc_vel */
+      /* Input the local position (loc_pos) and local velocity (loc_vel) */
       if (step % output_freq == 0)
          Output_state(t, loc_pos, loc_vel, n, loc_n);
 #     endif
@@ -627,7 +626,7 @@ void Get_init_cond(double loc_masses[], vect_t loc_pos[],
       }
    }
 
-   /* Rank0 将数据 Scatter 给各个进程的局部数组 */
+   /* Rank0 scatters the data to the local arrays of each process. */
    MPI_Scatter(temp_masses, loc_n, MPI_DOUBLE, loc_masses, loc_n, MPI_DOUBLE, 0, comm);
    MPI_Scatter(temp_pos, loc_n, vect_mpi_t, loc_pos, loc_n, vect_mpi_t, 0, comm);
    MPI_Scatter(vel, loc_n, vect_mpi_t, loc_vel, loc_n, vect_mpi_t, 0, comm);
@@ -651,7 +650,7 @@ void Gen_init_cond(double loc_masses[], vect_t loc_pos[],
    double speed = 3.0e4;
 
    for (loc_part = 0; loc_part < loc_n; loc_part++) {
-      /* 计算当前局部粒子对应的全局 ID */
+      /* Calculate the global ID corresponding to the current local particle. */
       global_part = my_rank * loc_n + loc_part;
 
       loc_masses[loc_part] = mass;
@@ -686,13 +685,13 @@ void Output_state(double time, vect_t loc_pos[], vect_t loc_vel[],
       pos = malloc(n * sizeof(vect_t));
    }
 
-   /* 1. 收集所有进程的位置信息到 Rank 0 */
+   /* Collect the location information of all processes and aggregate it to Rank 0. */
    MPI_Gather(loc_pos, loc_n, vect_mpi_t, pos, loc_n, vect_mpi_t, 0, comm);
 
-   /* 2. 收集所有进程的速度信息到 Rank 0 */
+   /* Collect speed information of all processes and gather it to Rank 0. */
    MPI_Gather(loc_vel, loc_n, vect_mpi_t, vel, loc_n, vect_mpi_t, 0, comm);
 
-   /* 3. 由 Rank 0 统一打印输出 */
+   /* All print output is unified via Rank 0. */
    if (my_rank == 0) {
       printf("%.2f\n", time);
       for (part = 0; part < n; part++) {
@@ -792,7 +791,7 @@ void Update_part(int loc_part, double loc_masses[], vect_t loc_forces[],
       double delta_t) {
    double fact;
 
-   /* 使用局部的 loc_masses[loc_part]，不再访问全局 masses */
+   /* The local variable loc_masses[loc_part] is used instead of accessing the global masses. */
    fact = delta_t / loc_masses[loc_part];
 
 #  ifdef DEBUG
