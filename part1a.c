@@ -98,6 +98,59 @@ void Compute_force(int loc_part, double masses[], vect_t loc_forces[],
 void Update_part(int loc_part, double masses[], vect_t loc_forces[],
       vect_t loc_pos[], vect_t loc_vel[], int n, int loc_n, double delta_t);
 
+/* ===================================================================
+ *                    UNIT TESTS (-DDEBUG_TEST)
+ * =================================================================== */
+#ifdef DEBUG_TEST
+void Run_Force_Unit_Test(int my_rank) {
+   if (my_rank == 0) {
+      printf("\n================ [UNIT TEST RUNNING] ================\n");
+      printf("Testing Compute_force (2-body dummy system)...\n");
+
+      double test_masses[2] = {5.0e24, 5.0e24};
+      vect_t test_pos[2] = {{0.0, 0.0}, {1.0e5, 0.0}};
+      vect_t test_forces[1];
+
+      Compute_force(0, test_masses, test_forces, test_pos, 2, 2);
+
+      /* F = G * m1 * m2 / r^2 = (6.673e-11 * 5e24 * 5e24) / (1e5)^2 = 1.66825e29 N */
+      double expected_fx = 1.66825e29;
+      double error = fabs(test_forces[0][X] - expected_fx);
+
+      if (error < 1.0e24) {
+         printf("[PASS] Force Computation Test PASSED! Calculated Fx = %e\n", test_forces[0][X]);
+      } else {
+         printf("[FAIL] Force Computation Test FAILED! Expected = %e, Got = %e\n", expected_fx, test_forces[0][X]);
+      }
+      printf("=====================================================\n\n");
+   }
+}
+
+void Run_Ring_Transfer_Unit_Test(int my_rank, int comm_sz, MPI_Comm comm, MPI_Datatype vect_mpi_t) {
+   int loc_n = 1;
+   vect_t send_buf, recv_buf;
+   send_buf[X] = (my_rank + 1) * 10.0;
+   send_buf[Y] = 0.0;
+
+   int next = (my_rank + 1) % comm_sz;
+   int previous = (my_rank - 1 + comm_sz) % comm_sz;
+
+   MPI_Sendrecv(send_buf, loc_n, vect_mpi_t, next, 0,
+                recv_buf, loc_n, vect_mpi_t, previous, 0,
+                comm, MPI_STATUS_IGNORE);
+
+   double expected_x = (previous + 1) * 10.0;
+   if (fabs(recv_buf[X] - expected_x) < 1.0e-5) {
+      printf("[PASS] Rank %d Ring Transfer PASSED! Received PosX = %.1f from Rank %d\n",
+             my_rank, recv_buf[X], previous);
+   } else {
+      printf("[FAIL] Rank %d Ring Transfer FAILED! Got = %.1f, Expected = %.1f\n",
+             my_rank, recv_buf[X], expected_x);
+   }
+}
+#endif
+
+
 /*--------------------------------------------------------------------*/
 int main(int argc, char* argv[]) {
    int n;                      /* Total number of particles  */
@@ -129,6 +182,16 @@ int main(int argc, char* argv[]) {
    MPI_Comm_size(comm, &comm_sz);
    MPI_Comm_rank(comm, &my_rank);
 
+/*挂载单元测试：开启 -DDEBUG_TEST 时仅执行测试并退出 */
+#  ifdef DEBUG_TEST
+   Run_Force_Unit_Test(my_rank);
+   Run_Ring_Transfer_Unit_Test(my_rank, comm_sz, comm, vect_mpi_t);
+   MPI_Type_free(&vect_mpi_t);
+   MPI_Finalize();
+   return 0;
+#  endif
+
+
    Get_args(argc, argv, &n, &n_steps, &delta_t, &output_freq, &g_i);
    loc_n = n/comm_sz;  /* n should be evenly divisible by comm_sz */
    /* Calculate ring neighbors */
@@ -151,6 +214,10 @@ int main(int argc, char* argv[]) {
    else
       Gen_init_cond(masses, pos, loc_vel, n, loc_n);
 
+#  ifdef DEBUG
+   printf("Proc %d > Initialized loc_n = %d particles.\n", my_rank, loc_n);
+#  endif
+
    start = MPI_Wtime();
 #  ifndef NO_OUTPUT
    Output_state(0.0, masses, pos, loc_vel, n, loc_n);
@@ -162,9 +229,10 @@ int main(int argc, char* argv[]) {
       for (loc_part = 0; loc_part < loc_n; loc_part++)
          Update_part(loc_part, masses, loc_forces, loc_pos, loc_vel,
                n, loc_n, delta_t);
-         /* Initialize initial send buffer with locally updated positions */
-         memcpy(send_buf, loc_pos, loc_n * sizeof(vect_t));
-         send_owner = my_rank;
+
+      /* Initialize initial send buffer with locally updated positions */
+      memcpy(send_buf, loc_pos, loc_n * sizeof(vect_t));
+      send_owner = my_rank;
 
       /*MPI_Allgather(MPI_IN_PLACE, loc_n, vect_mpi_t,
                     pos, loc_n, vect_mpi_t, comm);*/
@@ -177,12 +245,17 @@ int main(int argc, char* argv[]) {
                       /* Calculate original owner of received block */
          recv_owner = (send_owner - 1 + comm_sz) % comm_sz;
 
+#        ifdef DEBUG
+         printf("Proc %d Stage %d > Received Pos Block from Rank %d (First Part PosX = %.3e)\n",
+                my_rank, stage, recv_owner, recv_buf[0][X]);
+#        endif
+
          /* Place received block into correct location in global position array */
          memcpy(pos + recv_owner * loc_n, recv_buf, loc_n * sizeof(vect_t));
 
          /* Prepare next transmission block */
-         // memcpy(send_buf, recv_buf, loc_n * sizeof(vect_t));
-         // send_owner = recv_owner;
+         memcpy(send_buf, recv_buf, loc_n * sizeof(vect_t));
+         send_owner = recv_owner;
       }
 #     ifndef NO_OUTPUT
       if (step % output_freq == 0)
